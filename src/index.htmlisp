@@ -1,0 +1,11 @@
+(let genPostList (include "./src/postlist.htmlisp") (digest
+    (_doctype "html")
+    (_head (_title "test"))
+    (_body
+        (_nav (_h1 "DELW"))
+        (_main
+        (... _ul (genPostList (def id name title desc _
+                              (attrib (_div (_h3 (attrib (_a title) "href" (add "/posts?id=" (str id))) " - " name)
+                                    (_p desc)) "class" "post")))))
+    ))
+)
