@@ -1,0 +1,9 @@
+body.entry {
+    text-align: center;
+    background-color: darkgreen;
+    color: wheat;
+}
+
+body.entry > main {
+    margin-top: 15vh;
+}

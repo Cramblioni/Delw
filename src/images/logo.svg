@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Created by sK1 2.0rc5 (https://sk1project.net/) -->
+<svg xmlns="http://www.w3.org/2000/svg" height="260.0pt" viewBox="0 0 250.0 260.0" width="250.0pt" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" id="68069b0f-669f-11ed-b955-1cbfce9b1102">
+<defs id="defs1">
+	<linearGradient y2="197.154198062" spreadMethod="pad" gradientUnits="userSpaceOnUse" x2="217.040227304" y1="197.154198062" x1="59.661321054" id="grad1">
+		<stop style="stop-color:#003900;stop-opacity:1.0;" offset="0.0" />
+		<stop style="stop-color:#f0ffff;stop-opacity:1.0;" offset="1.0" />
+	</linearGradient>
+	<linearGradient y2="99.3260730619" spreadMethod="pad" gradientUnits="userSpaceOnUse" x2="175.356633554" y1="99.3260730619" x1="29.887883554" id="grad2">
+		<stop style="stop-color:#003900;stop-opacity:1.0;" offset="0.0" />
+		<stop style="stop-color:#f0ffff;stop-opacity:1.0;" offset="1.0" />
+	</linearGradient>
+	<linearGradient y2="75.9315418119" spreadMethod="pad" gradientUnits="userSpaceOnUse" x2="216.192571054" y1="75.9315418119" x1="54.559758554" id="grad3">
+		<stop style="stop-color:#003900;stop-opacity:1.0;" offset="0.0" />
+		<stop style="stop-color:#f0ffff;stop-opacity:1.0;" offset="1.0" />
+	</linearGradient>
+	<linearGradient y2="34.6737293119" spreadMethod="pad" gradientUnits="userSpaceOnUse" x2="223.848821054" y1="34.6737293119" x1="137.075383554" id="grad4">
+		<stop style="stop-color:#003900;stop-opacity:1.0;" offset="0.0" />
+		<stop style="stop-color:#f0ffff;stop-opacity:1.0;" offset="1.0" />
+	</linearGradient>
+</defs>
+<g>
+	<g>
+		<path style="stroke-width:2.2677;stroke:#770000;fill-rule:evenodd;stroke-miterlimit:10.433;fill:url(#grad1);" d="M 59.6632,197.5811 L 72.4236,219.6992 166.0001,164.404 194.0731,252.8763 217.0419,239.2652 178.7606,141.4352 59.6632,197.5811 Z" />
+		<path style="stroke-width:2.2677;stroke:#770000;fill-rule:evenodd;stroke-miterlimit:10.433;fill:url(#grad2);" d="M 109.0035,163.5533 L 175.3578,135.4803 46.052,35.0982 29.8888,54.6642 126.0174,125.272 89.4375,137.1817 109.0035,163.5533 Z" />
+		<path style="stroke-width:2.2677;stroke:#770000;fill-rule:evenodd;stroke-miterlimit:10.433;fill:url(#grad3);" d="M 54.559,30.8447 L 178.7606,130.3761 189.8196,117.6157 152.389,85.2893 207.6842,88.6921 216.1912,77.633 131.9723,68.2754 65.618,21.4871 54.559,30.8447 Z" />
+		<path style="stroke-width:2.2677;stroke:#770000;fill-rule:evenodd;stroke-miterlimit:10.433;fill:url(#grad4);" d="M 137.0765,58.067 L 223.8475,63.1712 166.0001,6.1746 158.3439,28.2927 197.4759,52.1121 149.8369,44.4559 137.0765,58.067 Z" />
+	</g>
+</g>
+</svg>

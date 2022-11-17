@@ -33,34 +33,15 @@ def serialise(x: object):
   else: return repr(x)
 
 class APIthingy(http.server.BaseHTTPRequestHandler):
-  global DBCONN, COOKIEIND
+
   def do_GET(self):
+    print(">>>>>>>>>>>>> PATH:: ",self.path)
+    global DBCONN, SESSIONS
     cookie = {}
     for i in self.headers.get("Cookie", "").split("; "):
       if not i: break
       (key, value) = i.split("=")
       cookie[key] = value
-
-
-    print("cookie session:", cookie.get("session", "not-set"))
-    if ("Cookie" not in self.headers or cookie.get("session") not in SESSIONS)\
-    and (self.path.startswith("/app/") or self.path == "/") :
-      print("Handling cookies",
-            "Cookie" not in self.headers,
-            cookie.get("session") not in SESSIONS,
-            SESSIONS)
-      session = str(uuid.uuid1())
-      SESSIONS[session] = Session()
-
-
-      self.send_response(307)
-      self.send_header("Location", self.path)
-      cookie = http.cookies.SimpleCookie()
-      cookie["session"] = session
-      for morsel in cookie.values():
-        self.send_header("Set-Cookie", morsel.OutputString())
-      self.end_headers()
-      return
 
     tmp = urlparse(self.path)
     path, query = tmp.path, parse_qs(tmp.query)
@@ -72,7 +53,7 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
         "path": self.path,
         "cookie": cookie,
         "curs": curs,
-        "session": SESSIONS[cookie["session"]],
+        "session": SESSIONS.get(cookie["session"], None),
       })
       self.send_response(200)
       self.end_headers()
@@ -81,18 +62,46 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
       )
       curs.close()
 
-    elif path.startswith("/image/"):
-      imgpath = SITEPATH + path[1:]
-      print(os.path.abspath(imgpath))
-      if os.path.exists(imgpath):
-        print("FOUND")
+    elif path.startswith("/app/"):
+      print("APPLETTE")
+      curs = DBCONN.cursor()
+      venv = htmlisp.getEnv({
+        "path": self.path,
+        "cookie": cookie,
+        "curs": curs,
+        "session": SESSIONS.get(cookie["session"], None),
+        "front": path[5:],
+        "query": {k:v[0] for k, v in query.items()}
+      })
+      self.send_response(200)
+      self.end_headers()
+      self.wfile.write(
+        str(htmlisp.evaluate("./src/app.htmlisp", venv)).encode()
+      )
+      curs.close()
+
+    elif path.startswith("/src/"):
+      filepath = SITEPATH + path[5:]
+      if os.path.exists(filepath):
         self.send_response(200)
-        self.send_header("content-type", "image/" + path.rsplit(".", 1)[-1])
+        self.end_headers()
+        with open(filepath, "rb") as f:
+          self.wfile.write(f.read())
+      else:
+        self.send_response(404)
+
+    elif path.startswith("/images/"):
+      imgpath = SITEPATH + path[1:]
+      if os.path.exists(imgpath):
+        self.send_response(200)
+
+        ext =  path.rsplit(".", 1)[-1]
+        if ext == "svg": ext = "svg+xml"
+        self.send_header("content-type", "image/" + ext)
         self.end_headers()
         with open(imgpath, "rb") as f:
           self.wfile.write(f.read())
       else:
-        print("Not found")
         self.send_response(404)
     else:
       self.send_error(404)

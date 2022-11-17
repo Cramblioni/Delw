@@ -1,0 +1,22 @@
+// this generates the navigation stuff, and to handoff generating content to the proper place
+// this also acts as the digestion point, so applettes don't have to worry about that
+(let getPosts (include "./src/postlist.htmlisp")
+     dispPost (def id name title desc tags
+                   (_tr (_td (_h3 (attrib (_a title) "href" (add "/app/post?id=" (str id) )) " - " name) (_p desc))))
+(digest (_doctype "html")
+        (_html (_head (_title (add "Delw - " front))
+                      (attrib ((_link)) "rel"  "stylesheet"
+                                        "type" "text/css"
+                                        "href" "/src/style.css")
+                      (attrib ((_meta)) "charset" "utf8"))
+               (_body (_nav (attrib ((_img)) "src" "/images/logo.svg" "width" "64px"))
+                            (_p "Yeet" ))
+                      (_main (if (eq front "posts")
+                                 (... _table (getPosts dispPost))
+                             (if (eq front "post")
+                                 (... (def title path desc (_div (attrib ((_img)) "src" path) (_h2 title) (_p desc) ))
+                                    ((getattr ((getattr curs "execute") "SELECT title, path, description FROM posts where id=?" (getitem query "id") )
+                                              "fetchone")))
+                                 (_p "Something went wrong"))
+    )))
+))

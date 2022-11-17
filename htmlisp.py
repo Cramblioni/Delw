@@ -11,6 +11,8 @@ __all__ = (
 )
 
 class Sexpr(list):
+    col: int
+    line: int
     def __repr__(self): return f"$({', '.join(map(repr, self))})"
 
 class Ident(str):
@@ -21,10 +23,13 @@ def parse(txt: str) -> Sexpr:
     result = Sexpr([cur])
 
     cind, mxind = 0, len(txt)
+    line, col = 1, 1
     peek: str = txt[0] if mxind > 0 else "\x00"
     def advance() -> str:
-        nonlocal peek, cind
+        nonlocal peek, cind, line, col
         cind, ret = cind + 1, peek
+        col += 1
+        if ret == "\n": col, line = 1, line + 1
         peek = txt[cind] if cind < mxind else "\x00"
         return ret
 
@@ -35,6 +40,8 @@ def parse(txt: str) -> Sexpr:
             while peek != "\n": advance()
         elif c == "(":
             cur = Sexpr()
+            cur.col = col
+            cur.line = line
             result.append(cur)
         elif c == ")":
             result.pop()
@@ -73,8 +80,12 @@ def evaluate(path: str,
         prog = parse(f.read())
     venv = (lambda x: ChainMap(x) if isinstance(x, dict) else x)(env())
     venv = venv.new_child()
-
-    return _eval(prog, venv)
+    try:
+        return _eval(prog, venv)
+    except Exception as e:
+        raise Exception(f"near line {venv[' env'][' line']},"
+                        f" col {venv[' env'][' col']} in {path}\n{e.args[0]}")\
+            from e
 
 class Macro:
     func: Callable[[ChainMap[str, object], Sexpr], Sexpr]
@@ -84,6 +95,8 @@ def _eval(prog: Sexpr | Ident | int | float | str, env: ChainMap[str, object]) -
     if isinstance(prog, Ident): return env[str(prog)]
     if not isinstance(prog, Sexpr): return prog
     assert len(prog) > 0
+    env[" env"][" line"] = prog.line
+    env[" env"][" col"] = prog.col
     if len(prog) == 1:
         if isinstance(prog[0], Sexpr):
             tmp = _eval(prog[0], env)
@@ -208,6 +221,7 @@ builtins = {
     "attrib": lambda x, *a: x.update(dict(chunk(a, 2))),
     ".": lambda f, g: lambda x: g(f(x)),
     "str":str, "int":int, "float":float,
+    "empty": lambda x: x([]),
     **vars(operator),
     **tags
 }
