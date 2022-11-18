@@ -8,11 +8,13 @@ import http.cookies
 import socketserver
 from urllib.parse import urlparse, parse_qs
 
+
 # hydration
 import htmlisp
 
-# tokens :)
+# handling sessions
 import uuid
+import datetime
 
 from getpass import getpass
 
@@ -35,8 +37,8 @@ def serialise(x: object):
 class APIthingy(http.server.BaseHTTPRequestHandler):
 
   def do_GET(self):
-    print(">>>>>>>>>>>>> PATH:: ",self.path)
-    global DBCONN, SESSIONS
+    print(">>>>>>>>>>>>> PATH:: ",self.path, file=sys.stderr)
+    global DBCONN
     cookie = {}
     for i in self.headers.get("Cookie", "").split("; "):
       if not i: break
@@ -106,8 +108,6 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
     else:
       self.send_error(404)
 
-
-
   def do_POST(self):
     if self.path == "/login":
       pass
@@ -115,6 +115,9 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
       pass
     else:
       self.send_error(404, "na, just na")
+
+def createUser():
+  pass
 
 PORT: int = 8080
 HANDLER = APIthingy
@@ -128,9 +131,8 @@ if __name__ == "__main__":
     print("Creating user table")
     curs.execute("""
 CREATE TABLE "users" (
-	"id"	INTEGER UNIQUE,
-	"permit" INTEGER,
-	"name"	TEXT UNIQUE,
+	"id"	INTEGER,
+	"name"	TEXT,
 	"password"	BLOB,
 	PRIMARY KEY("id" AUTOINCREMENT)
 )
@@ -138,13 +140,11 @@ CREATE TABLE "users" (
     print("creating posts table")
     curs.execute("""
 CREATE TABLE "posts" (
-	"id"	INTEGER UNIQUE,
+	"id"	INTEGER,
 	"poster"	INTEGER,
 	"path"	TEXT,
 	"title"	TEXT,
 	"description"	TEXT,
-	"tags"	TEXT,
-	FOREIGN KEY("poster") REFERENCES "users"("id"),
 	PRIMARY KEY("id" AUTOINCREMENT)
 )
 """)

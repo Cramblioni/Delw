@@ -1,2 +1,4 @@
 # delw
-## a block image handler
+## proof of concept art portal
+
+Not much more to say

@@ -95,6 +95,7 @@ def _eval(prog: Sexpr | Ident | int | float | str, env: ChainMap[str, object]) -
     if isinstance(prog, Ident): return env[str(prog)]
     if not isinstance(prog, Sexpr): return prog
     assert len(prog) > 0
+    assert isinstance(env[" env"], ChainMap)
     env[" env"][" line"] = prog.line
     env[" env"][" col"] = prog.col
     if len(prog) == 1:
