@@ -1,2 +1,5 @@
-.pycache
+.pycache/*.*
+.vscode/*.*
 delw.db
+dump.bin
+prober.py

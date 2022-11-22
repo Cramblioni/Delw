@@ -36,7 +36,7 @@ def parse(txt: str) -> Sexpr:
     while cind < mxind:
         c = advance()
         if c in " \n\t": continue
-        elif c == "/" and peek == "/":
+        elif (c == "/" and peek == "/") or c == ";":
             while peek != "\n": advance()
         elif c == "(":
             cur = Sexpr()
@@ -68,7 +68,8 @@ def parse(txt: str) -> Sexpr:
             buff = c
             while peek not in "() \n\t":
                 buff += advance()
-            cur.append(Ident(buff))
+            if buff == "None": cur.append(None)
+            else: cur.append(Ident(buff))
 
     assert len(result) == 1
     return result[0][0]
@@ -84,7 +85,7 @@ def evaluate(path: str,
         return _eval(prog, venv)
     except Exception as e:
         raise Exception(f"near line {venv[' env'][' line']},"
-                        f" col {venv[' env'][' col']} in {path}\n{e.args[0]}")\
+                        f" col {venv[' env'][' col']} in {path}\n{e.args}")\
             from e
 
 class Macro:

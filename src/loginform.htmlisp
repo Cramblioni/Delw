@@ -1,0 +1,17 @@
+;; exports either a "you're logged in as" message or the login form with status messages
+(let genform (def
+    (attrib (_form (attrib (_input) "type" "text"     "name" "username")  ; username
+                   (attrib (_input) "type" "password" "name" "password")  ; password
+                   (attrib (_input) "type" "submit")  ; submit
+                   )
+    "method" "POST"
+    "action" "/app/login")
+)
+(if (eq session None)
+    ; no session == Not Logged IN
+    ((genform))
+    ; session == logged in
+    (if (eq method "GET")
+        ((genform))
+        (_p "this is a post")))
+)

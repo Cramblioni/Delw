@@ -8,6 +8,5 @@
                                 (_h3 "Proof of concept Art portal system for " (_b "meep")))
                        (_main (attrib ((_img)) "src" "/images/logo.svg")
                               (_h1 (attrib (_a "Hop In") "href" "/app/posts" ))
-                              (_p (attrib (_a "Login") "href" "/app/login"))
-                              (_p "debug: session token:: " (getitem cookie "session") ))
+                              (_p (attrib (_a "Login") "href" "/app/login")))
                 ) "class" "entry")))
