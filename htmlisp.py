@@ -1,8 +1,260 @@
-
+import sys, os
 from ast import literal_eval
 from collections import ChainMap
-from typing import Callable, Any
+from typing import Callable, Optional, Any
 from iters import *
+
+
+class Error:
+  __slots__ = ("msg", "line", "col", "file", "end")
+  msg: str
+  line: int
+  col: int
+  endl: int
+  file: str
+
+  def __init__(self, msg: str, line: int, col: int, end: int, file: str):
+    self.msg, self.line, self.col = msg, line, col
+    self.file, self.end = file, end
+
+  def __str__(self):
+    return f"{self.file}:{self.line}:{self.col}: {self.msg}"
+
+class AstNode:
+  __slots__ = ("line", "col")
+  line: int
+  col: int
+
+  def __str__(self): return "<Node>"
+
+class Ident(AstNode):
+  __slots__ = ("tok",)
+  tok: str
+  def __init__(self, tok: str, line: int, col: int):
+    self.tok, self.line, self.col = tok, line, col
+  def __str__(self): return f"*{self.tok}"
+
+class Literal(AstNode):
+  __slots__ = ("lit",)
+  lit: str
+  def __init__(self, lit: str, line: int, col: int):
+    self.lit, self.line, self.col = lit, line, col
+  def __str__(self): return f"'{self.lit}"
+
+class Expression(AstNode):
+  __slots__ = ("toks", "end")
+  toks: list[AstNode]
+  end: int
+  def __init__(self, toks: list[AstNode], line: int, col: int, end: int):
+    self.toks, self.line, self.col, self.end = toks, line, col, end
+  def __str__(self): return f"({' '.join(map(str, self.toks))})"
+
+class Program(AstNode):
+  __slots__  = ("prog", "path")
+  prog: Optional[AstNode]
+  path: str
+  def __init__(self, prog: Optional[AstNode], path: str, line: int, col: int):
+    self.prog, self.line, self.col = prog, line, col
+    self.path = path
+  def __str__(self): return str(self.prog)
+
+
+def parse(txt: str, path="undefined") -> Program | Error:
+  cind, mxind = 0, len(txt)
+  line, col = 1, 1
+  peek: str = txt[0] if mxind > 0 else "\x00"
+  def advance() -> str:
+    nonlocal peek, cind, line, col
+    cind, ret = cind + 1, peek
+    col += 1
+    if ret == "\n": col, line = 1, line + 1
+    peek = txt[cind] if cind < mxind else "\x00"
+    return ret
+  stack : list[Expression] = []
+  def push(x: Expression): stack.append(x)
+  def pop() -> Expression:
+    result = stack.pop()
+    assert isinstance(result, Expression)
+    return result
+  def genErr(msg, endl=-1):
+    return Error(msg, line, col, endl, path)
+
+  while cind < mxind:
+      if peek in " \n\t": advance()
+      elif (peek == "/" and peek == "/") or peek == ";":
+        while peek != "\n": advance()
+      else:
+        break
+  else:
+      return genErr("No Program Found")
+  def add(x: AstNode):
+      if isinstance(stack[-1], Program):
+        setattr(stack[-1], "prog", x)
+      else:
+        stack[-1].toks.append(x)
+  list.append(stack, Program(None, filename, line, col))
+  while cind < mxind:
+    c = advance()
+    if c in " \n\t": continue
+    elif (c == "/" and peek == "/") or c == ";":
+      while peek != "\n": advance()
+    elif c == "(":
+      push(Expression([], line, col, -1))
+    elif c == ")":
+      tmp00: Expression = pop()
+      tmp00.end = line
+      if len(stack) == 0:
+        return genErr("unpaired Closin paren")
+      add(tmp00)
+    elif c == '"':
+      buff: str = c
+      while peek != '"':
+        if peek == "\\":
+          advance()
+          buff += advance()
+        else: buff += advance()
+      buff += advance()
+      add(Literal(buff, line, col))
+    elif c.isdigit():
+      buff = c
+      hd = False
+      if peek == "." and not hd:
+        hd = True; buff += advance()
+      while peek.isdigit():
+        buff += advance()
+        if peek == "." and not hd:
+          hd = True; buff += advance()
+      add(Literal(buff, line, col))
+    else:
+      buff = c
+      while peek not in "() \n\t":
+        buff += advance()
+      if buff == "None": add(Literal(buff, line, col))
+      else: add(Ident(buff, line, col))
+    if isinstance(stack[-1], Program):
+      tmp : Program = list.pop(stack)
+      while cind < mxind:
+        if peek == ";":
+          while advance() != "\n": pass
+        elif advance() not in " \n\t": break
+      else:
+        return tmp
+      return genErr("garbage after program")
+  return genErr("This is not suppose to happen")
+
+def quickCheck(arg: Program, path="undefined") -> Optional[Error]:
+  assert arg.prog is not None
+  def genError(tok: AstNode, msg, endl=-1):
+    return Error(msg, tok.line, tok.col, endl, path)
+
+  # check for empty expressions or expr.toks == []
+  # And Here's an example of obverver recursion
+  stack : list[AstNode] = [arg.prog]
+  while len(stack) > 0:
+    cur = stack.pop()
+    if isinstance(cur, Expression):
+      if len(cur.toks) == 0:
+        return genError(cur, "Empty expression located")
+      else:
+        stack.extend(cur.toks)
+    else:
+      continue
+  # we should do a second traversal to find other
+  # errors that are easily known (spreading nothing, let with no bindings)
+  return None
+
+def parseFile(path: str) -> Program | Error:
+  if not os.path.exists(path):
+    return Error(f"file {path!r} does not exist", -1, -1, -1, path)
+  with open(path, "r") as f:
+    text = f.read()
+  step = parse(text, path)
+  if isinstance(step, Error): return step
+  test = quickCheck(step, path)
+  if isinstance(test, Error): return test
+  return step
+
+def link(arg: Program, lookup: dict[str, Program]) -> dict[str, Program] | Error:
+  assert arg.prog is not None
+  def genError(tok: AstNode, msg, endl=-1):
+    return Error(msg, tok.line, tok.col, endl, arg.path)
+
+  result = {**lookup}
+  stack : list[AstNode] = [arg.prog]
+  while len(stack) > 0:
+    cur = stack.pop()
+    if isinstance(cur, Expression):
+      if isinstance(cur.toks[0], Ident) and cur.toks[0].tok == "include":
+        if len(cur.toks) != 2:
+          return genError(cur, "`inlcude` must have one argument, which is "\
+                               "a static string")
+        _, pathtok = cur.toks
+        if not isinstance(pathtok, Literal):
+          return genError(pathtok, "`inlcude` argument must be static string")
+        path = literal_eval(pathtok.lit)
+        if not isinstance(path, str):
+          return genError(pathtok, "`inlcude` argument must be string")
+        if path in result: continue
+        if not os.path.exists(path):
+          return genError(pathtok, f"Cannot Find source file {path!r}")
+        iprog = parseFile(path)
+        if isinstance(iprog, Error): return iprog
+        result[path] = iprog
+        tmp = link(iprog, result)
+        if isinstance(tmp, Error): return tmp
+        result.update(tmp)
+        cur.toks = [result[path]]
+      else:
+        stack.extend(cur.toks)
+    else:
+      continue
+
+  return result
+
+# evaluating this stuff
+Environment = tuple[dict[str, Any], ChainMap[str, Any]]
+Result = tuple[Optional[Error], Any]
+
+class Macro:
+  func: Callable[[Environment, tuple[AstNode, ...]], Result]
+
+def _eval(node: AstNode, env: Environment) -> Result:
+  if type(node) is Program:
+    assert node.prog is not None
+    nenv = (env[0], ChainMap({"__name__": node.path}))
+    return _eval(node.prog, nenv)
+  elif type(node) is Expression:
+    # check if dynmacro then change how shit is passed
+    err, f  = _eval(node.toks[0], env)
+    if err is not None: return err, None
+    if isinstance(f, Macro):
+      err, new = f.func(env, tuple(node.toks[1:]))
+      if err is not None: return err, None
+      return _eval(Expression(list(new), node.line, node.col, node.end), env)
+    else:
+      args = []
+      for i in node.toks[1:]:
+        err, val  = _eval(i, env)
+        if err is not None: return err, None
+        args.append(val)
+
+      return None, f(*args)
+
+  elif type(node) is Ident:
+    res: Any; err: Optional[Error]
+    try: err, res = None, env[node.tok in env[1]][node.tok]
+    except KeyError: res, err = None, Error(
+      f"name {node.tok!r} not bound",
+      node.line, node.col, -1,
+      env[1].get("__name__", "__main__")
+    )
+    return err, res
+  elif type(node) is Literal:
+    return None, literal_eval(node.lit)
+
+  return Error("Unreachable... maybe not?",
+               node.line, node.col, -1,
+               env[1].get("__name__", "__main__")), None
 
 __all__ = (
     "evaluate",
@@ -10,136 +262,32 @@ __all__ = (
     "getEnv"
 )
 
-class Sexpr(list):
-    col: int
-    line: int
-    def __repr__(self): return f"$({', '.join(map(repr, self))})"
+# implementing HTML tags
 
-class Ident(str):
-    def __repr__(self): return "£" + super().__str__()
+class HtmlTag:
+  __slots__ = ("attrib", "children")
+  tag: str
+  attrib: dict[str, str]
+  children: list["HtmlTag | Any"]
 
-def parse(txt: str) -> Sexpr:
-    cur = Sexpr()
-    result = Sexpr([cur])
+  def __init__(self, *children):
+    self.children = list(children)
+    self.attrib = {}
+  def __str__(self) -> str:
+    intag = " ".join(chain([self.tag],
+                           map('%s="%s"'.__mod__, self.attrib.items())))
+    if len(self.children) == 0:
+      return f"<{intag} />"
+    return f'<{intag}>{"".join(map(str, self.children))}</{self.tag}>'
 
-    cind, mxind = 0, len(txt)
-    line, col = 1, 1
-    peek: str = txt[0] if mxind > 0 else "\x00"
-    def advance() -> str:
-        nonlocal peek, cind, line, col
-        cind, ret = cind + 1, peek
-        col += 1
-        if ret == "\n": col, line = 1, line + 1
-        peek = txt[cind] if cind < mxind else "\x00"
-        return ret
+def tagGen(tags: list[str]) -> dict[str, HtmlTag]:
+  result = {}
+  for tag in tags:
+    result[tag] = type(tag, (HtmlTag,), {"tag": tag[1:]})
+  return result
 
-    while cind < mxind:
-        c = advance()
-        if c in " \n\t": continue
-        elif (c == "/" and peek == "/") or c == ";":
-            while peek != "\n": advance()
-        elif c == "(":
-            cur = Sexpr()
-            cur.col = col
-            cur.line = line
-            result.append(cur)
-        elif c == ")":
-            result.pop()
-            result[-1].append(cur)
-            cur = result[-1]
-        elif c == '"':
-            buff: str = ""
-            while peek != '"':
-                if peek == "\\":
-                    advance()
-                    buff += advance()
-                else: buff += advance()
-            advance()
-            cur.append(buff)
-        elif c.isdigit():
-            buff = c
-            hd = False
-            while peek.isdigit():
-                buff += advance()
-                if peek == "." and not hd:
-                    hd = True; buff += advance()
-            cur.append(literal_eval(buff))
-        else:
-            buff = c
-            while peek not in "() \n\t":
-                buff += advance()
-            if buff == "None": cur.append(None)
-            else: cur.append(Ident(buff))
-
-    assert len(result) == 1
-    return result[0][0]
-
-def evaluate(path: str,
-      env:Callable[[],dict[str, object]|ChainMap[str, object]]=dict) -> object:
-    prog : Sexpr
-    with open(path, "r") as f:
-        prog = parse(f.read())
-    venv = (lambda x: ChainMap(x) if isinstance(x, dict) else x)(env())
-    venv = venv.new_child()
-    try:
-        return _eval(prog, venv)
-    except Exception as e:
-        raise Exception(f"near line {venv[' env'][' line']},"
-                        f" col {venv[' env'][' col']} in {path}\n{e.args}")\
-            from e
-
-class Macro:
-    func: Callable[[ChainMap[str, object], Sexpr], Sexpr]
-    def __init__(self, func): self.func = func
-
-def _eval(prog: Sexpr | Ident | int | float | str, env: ChainMap[str, object]) -> object:
-    if isinstance(prog, Ident): return env[str(prog)]
-    if not isinstance(prog, Sexpr): return prog
-    assert len(prog) > 0
-    assert isinstance(env[" env"], ChainMap)
-    env[" env"][" line"] = prog.line
-    env[" env"][" col"] = prog.col
-    if len(prog) == 1:
-        if isinstance(prog[0], Sexpr):
-            tmp = _eval(prog[0], env)
-            return tmp() if callable(tmp) else tmp
-        else:
-            return _eval(prog[0], env)
-    else:
-        f = _eval(prog[0], env)
-        if isinstance(f, Macro):
-            return _eval(f.func(env, Sexpr(prog[1:])), env)
-        elif callable(f):
-            return f(*map(lambda x: _eval(x, env), prog[1:]))
-        else: raise RuntimeError("cannot call non-callable")
-
-class TagInterp:
-    tag: str
-    arr: list[Any]
-    attrib: dict[str, str]
-    __toTagOverride__: Callable[[], str]
-    def __init__(self, *args):
-        self.arr = list(args)
-        self.attrib = {}
-    def toTag(self):
-        if hasattr(self, "__toTagOverride__"):
-            return self.__toTagOverride__()
-        attribs = map("%s=\"%s\"".__mod__, self.attrib.items())
-        if len(self.arr) == 0:
-            return f'<{" ".join(chain([self.tag], attribs))}/>'
-        cont = "".join(map(digest, self.arr))
-        return f'<{" ".join(chain([self.tag], attribs))}>{cont}</{self.tag}>'
-    def update(self, dct: dict):
-        self.attrib.update(dct)
-        return self
-
-def domgen(tags: list[str]) -> dict[str, object]:
-    result = {}
-    for tag in tags:
-        result[tag] = type(tag, (TagInterp,),{"tag":tag[1:]})
-    return result
-
-tags = domgen([
+def _dts(self): return f"<!DOCTYPE {self.children[0]}"
+tags = {**tagGen([
     '_a', '_abbr', '_address', '_area', '_article', '_aside', '_audio', '_b',
     '_base', '_bdi', '_bdo', '_blockquote', '_body', '_br', '_button',
     '_canvas', '_caption', '_cite', '_code', '_col', '_colgroup', '_data',
@@ -154,91 +302,70 @@ tags = domgen([
     '_source', '_span', '_strong', '_style', '_sub', '_summary', '_sup',
     '_svg', '_table', '_tbody', '_td', '_template', '_textarea', '_tfoot',
     '_th', '_thead', '_time', '_title', '_tr', '_track', '_u', '_ul', '_var',
-    '_video', '_wbr'])
-tags["_doctype"] = type("!DOCTYPE", (TagInterp,), {
-    "tag": "!Doctype",
-    "__toTagOverride__": lambda s: f"<!Doctype {s.arr[0]}>"
-})
-
-#@Macro
-#def spread(func, itr):
-#    return Sexpr([func, *itr])
-def spread(func, itr):
-    return func(*itr)
-
-@Macro
-def fIf(env, expr):
-    (cond, iftrue, orelse) = expr
-    if _eval(cond, env): return iftrue
-    else: return orelse
-
-@Macro
-def fLet(env:ChainMap, expr):
-    nenv = env.new_child(**{k: _eval(v, env)
-                            for (k, v) in chunk(expr[:-1], 2)})
-    return _eval(expr[-1], nenv)
-@Macro
-def fDef(env, expr):
-    argnames = expr[:-1]
-    val = expr[-1]
-    def f(*args):
-        nenv=env.new_child(**dict(zip(argnames, args)))
-        return _eval(val, nenv)
-    return f
-@Macro
-def include(env, expr):
-    venv = ChainMap(env[" env"])
-    return evaluate(str(_eval(expr[0], env)), lambda: venv)
-@Macro
-def do(env, expr):
-    result = None
-    for result in map(_eval, expr, repeat(env)):
-        pass
-    return result
+    '_video', '_wbr']),
+    "_doctype": type("_doc", (HtmlTag,), {"tag": "!DOCTYPE", "__str__": _dts})}
 
 class Morsel(str): pass
-def digest(*args: Any) -> Morsel:
-    if len(args) > 1:
-        return Morsel("".join(map(digest, args)))
-    [node] = args
-    if hasattr(node, "toTag") and callable(node.toTag):
-        return Morsel(node.toTag())
-    if isinstance(node, Morsel): return node
-    else:
-        return Morsel(str(node).replace("<", "&lt;").replace(">", "&gt;"))
+def digest(*tags: HtmlTag) -> Morsel:
+  return Morsel("".join(map(str, tags)))
 
-import operator
-builtins = {
-    "digest": digest, "include": include, "do": do,
-    "getattr": getattr,
-    "setattr": setattr,
-    "getitem": lambda x, y: x[y],
-    "setitem": lambda x, y, v: x.__setitem__(y, v),
-    "...": spread, "if": fIf,
-    "map": map, "filter": filter,
-    "list": lambda *a: list(chain(*a)),
-    "range": range,
-    "let": fLet, "def": fDef,
-    "format": str.format,
-    "attrib": lambda x, *a: x.update(dict(chunk(a, 2))),
-    ".": lambda f, g: lambda x: g(f(x)),
-    "str":str, "int":int, "float":float,
-    "empty": lambda x: x([]),
-    **vars(operator),
+def attrib(tag: HtmlTag, *attribs: str) -> HtmlTag:
+  tmp = type(tag)()
+  tmp.children = tag.children[:]
+  tmp.attrib = {**tag.attrib, **dict(chunk(attribs, 2))}
+  return tmp
+
+_benv = {
+    "+": lambda x, *y: reduce(op.add, y, x),
+    "-": lambda x, *y: reduce(op.sub, y, x),
+    "*": lambda x, *y: reduce(op.mul, y, x),
+    "/": lambda x, *y: reduce(op.truediv, y, x),
+    "//": lambda x, *y: reduce(op.floordiv, y, x),
+    "%": lambda x, *y: reduce(op.mod, y, x),
+    "...": lambda f, xs: f(*xs),
+    "[]": list,
+    "list": lambda *x: list(x),
+    "digest": digest, "attrib": attrib,
     **tags
-}
-builtins[" env"] = builtins
+  }
 
-def getPrelude(): return builtins
-def getEnv(env: dict[str, object]) -> Callable[[], ChainMap[str, object]]:
-    nenv = ChainMap(getPrelude(), env)
-    nenv[" env"] = nenv
-    return lambda: nenv
+def getPrelude():
+  raise NotImplemented
+def evaluate(path: str,
+             env: Callable[[], dict[str, object]|ChainMap[str, object]]):
+  raise NotImplemented
+def getEnv(env: dict[str, object]):
+  raise NotImplemented
+
+def showError(err: Error):
+  lines = []
+  with open(err.file, "r") as f:
+    for _ in range(err.line - 1):
+      f.readline()
+    lines.append(f.readline())
+    if err.end != -1:
+      for _ in range(err.end - err.endl):
+        lines.append(f.readline())
+  print(err, file= sys.stderr)
+  print(*lines, sep="\n",file=sys.stderr)
+  if len(lines) == 1:
+    print(" "*(err.col - 2) + "^", file=sys.stderr)
+
+from functools import reduce
+import operator as op
 
 if __name__ == "__main__":
-    test = "(digest (p \"this is a \" (b \"TEST\") \" boio\"))"
-    data = parse(test)
-    print(repr(data))
-
-    print(_eval(data, ChainMap(builtins, {})))
-    print(evaluate("./src/index.htmlisp", lambda: builtins))
+  filename = "./src/index.htmlisp"
+  resp = parseFile(filename)
+  if isinstance(resp, Error):
+    showError(resp)
+    exit(1)
+  ltable = link(resp, {filename: resp})
+  if isinstance(ltable, Error):
+    showError(ltable)
+    exit(1)
+  err, ret = _eval(resp, (_benv, ChainMap({})))
+  if err is not None:
+    showError(err)
+    exit(1)
+  print(ret)

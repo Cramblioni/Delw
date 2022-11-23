@@ -1,12 +1,12 @@
 (digest (_doctype "html")
         (_html (_head (_title "Delw")
-                      (attrib ((_link)) "rel" "stylesheet"
+                      (attrib (_link) "rel" "stylesheet"
                                          "type" "text/css"
                                          "href" "/src/style.css")
-                      (attrib ((_meta)) "charset" "utf8"))
+                      (attrib (_meta) "charset" "utf8"))
                 (attrib (_body (_header (_h1 "Delw")
                                 (_h3 "Proof of concept Art portal system for " (_b "meep")))
-                       (_main (attrib ((_img)) "src" "/images/logo.svg")
+                       (_main (attrib (_img) "src" "/images/logo.svg")
                               (_h1 (attrib (_a "Hop In") "href" "/app/posts" ))
                               (_p (attrib (_a "Login") "href" "/app/login")))
                 ) "class" "entry")))
