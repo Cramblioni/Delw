@@ -41,6 +41,18 @@ class Literal(AstNode):
     self.lit, self.line, self.col = lit, line, col
   def __str__(self): return f"'{self.lit}"
 
+class Raw(AstNode):
+  __slots__ = ("val",)
+  val: Any
+  def __init__(self, val: Any, line: int, col: int):
+    self.val, self.line, self.col = val, line, col
+
+class NoCall(AstNode):
+  __slots__ = ("val",)
+  val: Any
+  def __init__(self, val: Any, line: int, col: int):
+    self.val, self.line, self.col = val, line, col
+
 class Expression(AstNode):
   __slots__ = ("toks", "end")
   toks: list[AstNode]
@@ -48,6 +60,7 @@ class Expression(AstNode):
   def __init__(self, toks: list[AstNode], line: int, col: int, end: int):
     self.toks, self.line, self.col, self.end = toks, line, col, end
   def __str__(self): return f"({' '.join(map(str, self.toks))})"
+
 
 class Program(AstNode):
   __slots__  = ("prog", "path")
@@ -92,7 +105,7 @@ def parse(txt: str, path="undefined") -> Program | Error:
         setattr(stack[-1], "prog", x)
       else:
         stack[-1].toks.append(x)
-  list.append(stack, Program(None, filename, line, col))
+  list.append(stack, Program(None, path, line, col))
   while cind < mxind:
     c = advance()
     if c in " \n\t": continue
@@ -188,7 +201,7 @@ def link(arg: Program, lookup: dict[str, Program]) -> dict[str, Program] | Error
         if len(cur.toks) != 2:
           return genError(cur, "`inlcude` must have one argument, which is "\
                                "a static string")
-        _, pathtok = cur.toks
+        a, pathtok = cur.toks
         if not isinstance(pathtok, Literal):
           return genError(pathtok, "`inlcude` argument must be static string")
         path = literal_eval(pathtok.lit)
@@ -203,7 +216,7 @@ def link(arg: Program, lookup: dict[str, Program]) -> dict[str, Program] | Error
         tmp = link(iprog, result)
         if isinstance(tmp, Error): return tmp
         result.update(tmp)
-        cur.toks = [result[path]]
+        cur.toks = [NoCall(result[path], a.line, a.col)]
       else:
         stack.extend(cur.toks)
     else:
@@ -216,7 +229,8 @@ Environment = tuple[dict[str, Any], ChainMap[str, Any]]
 Result = tuple[Optional[Error], Any]
 
 class Macro:
-  func: Callable[[Environment, tuple[AstNode, ...]], Result]
+  func: Callable[[Expression, Environment, tuple[AstNode, ...]], Result]
+  def __init__(self, func): self.func = func
 
 def _eval(node: AstNode, env: Environment) -> Result:
   if type(node) is Program:
@@ -225,13 +239,22 @@ def _eval(node: AstNode, env: Environment) -> Result:
     return _eval(node.prog, nenv)
   elif type(node) is Expression:
     # check if dynmacro then change how shit is passed
-    err, f  = _eval(node.toks[0], env)
+    fnode = node.toks[0]
+    if isinstance(fnode, NoCall):
+      return _eval(fnode.val, env)
+    err, f  = _eval(fnode, env)
     if err is not None: return err, None
     if isinstance(f, Macro):
-      err, new = f.func(env, tuple(node.toks[1:]))
+      err, new = f.func(node, env, tuple(node.toks[1:]))
       if err is not None: return err, None
+      if not isinstance(new, list):
+        new= [new]
       return _eval(Expression(list(new), node.line, node.col, node.end), env)
     else:
+      if not callable(f):
+        return Error("attempted call of non-callable",
+                     node.line, node.col, node.end,
+                     env[1]["__name__"]),None
       args = []
       for i in node.toks[1:]:
         err, val  = _eval(i, env)
@@ -252,6 +275,9 @@ def _eval(node: AstNode, env: Environment) -> Result:
   elif type(node) is Literal:
     return None, literal_eval(node.lit)
 
+  elif type(node) is Raw:
+    return None, node.val
+
   return Error("Unreachable... maybe not?",
                node.line, node.col, -1,
                env[1].get("__name__", "__main__")), None
@@ -259,7 +285,8 @@ def _eval(node: AstNode, env: Environment) -> Result:
 __all__ = (
     "evaluate",
     "getPrelude",
-    "getEnv"
+    "getEnv",
+    "Result", "showError", "Error",
 )
 
 # implementing HTML tags
@@ -315,6 +342,56 @@ def attrib(tag: HtmlTag, *attribs: str) -> HtmlTag:
   tmp.attrib = {**tag.attrib, **dict(chunk(attribs, 2))}
   return tmp
 
+@Macro
+def fIf(ref: Expression, env: Environment, args: list[AstNode]) -> Result:
+  if len(args) != 3:
+    return Error("`if` takes 3 arguments",
+                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+  err, cond = _eval(args[0], env)
+  if err is not None: return err, None
+  body = args[int(cond) + 1]
+  return None, body.toks if isinstance(body, Expression) else [body]
+
+@Macro
+def fLet(ref: Expression, env: Environment, args: list[AstNode]):
+  if len(args) < 3:
+    return Error("let requires atleast 3 args",
+                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+  if len(args) & 1 == 0:
+    return Error("let should name value pairs followed by an expression",
+                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+  expr = args[-1]
+  nenv = {}
+  for (k, v) in chunk(args[:-1], 2):
+    err, v2 = _eval(v, env)
+    if err is not None:
+      return err, None
+    nenv.update(((k, v),))
+
+  err, ret = _eval(expr, (env[0], env[1].new_child(nenv)))
+  if err is not None:
+    return err, None
+  return None, Raw(ret, ref.line, ref.col)
+
+@Macro
+def fDef(ref: Expression, env: Environment, args: list[AstNode]):
+  if len(args) < 1:
+    return Error("`def` requires body",
+                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+  body = args[-1]
+  params = []
+  for pn in args[:-1]:
+    if not isinstance(pn, Ident):
+      return Error("`def` requires body",
+                  ref.line, ref.col, ref.end, env[1]["__name__"]), None
+    params.append(pn)
+  def inner(*iargs : Any):
+    nenv = {k.toks:v for (k,v) in zip(params, iargs)}
+    return _eval(body, (env[0], env[1].new_child(nenv)))
+
+  return None, Raw(inner, ref.line, ref.col)
+
+
 _benv = {
     "+": lambda x, *y: reduce(op.add, y, x),
     "-": lambda x, *y: reduce(op.sub, y, x),
@@ -322,20 +399,37 @@ _benv = {
     "/": lambda x, *y: reduce(op.truediv, y, x),
     "//": lambda x, *y: reduce(op.floordiv, y, x),
     "%": lambda x, *y: reduce(op.mod, y, x),
+    "=": lambda x, *y: reduce(op.eq, y, x),
+    "/=": lambda x, *y: reduce(op.ne, y, x),
     "...": lambda f, xs: f(*xs),
     "[]": list,
+    "range": range,
+    "map": map,
     "list": lambda *x: list(x),
     "digest": digest, "attrib": attrib,
+
+    "if": fIf, "let": fLet, "def": fDef,
+
     **tags
   }
 
 def getPrelude():
-  raise NotImplemented
+  return lambda :(_benv, ChainMap())
 def evaluate(path: str,
-             env: Callable[[], dict[str, object]|ChainMap[str, object]]):
-  raise NotImplemented
+             env: Callable[[], Environment]) -> Result:
+  prog = parseFile(path)
+  if isinstance(prog, Error):
+    showError(prog)
+    return prog, None
+  ltable = link(prog, {"path": prog})
+  if isinstance(ltable, Error):
+    showError(ltable)
+    return ltable, None
+  return _eval(prog, env())
+
+
 def getEnv(env: dict[str, object]):
-  raise NotImplemented
+  return lambda :(_benv, ChainMap(env))
 
 def showError(err: Error):
   lines = []
@@ -344,7 +438,7 @@ def showError(err: Error):
       f.readline()
     lines.append(f.readline())
     if err.end != -1:
-      for _ in range(err.end - err.endl):
+      for _ in range(err.end - err.line):
         lines.append(f.readline())
   print(err, file= sys.stderr)
   print(*lines, sep="\n",file=sys.stderr)

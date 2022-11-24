@@ -11,9 +11,9 @@ import http.cookies
 import socketserver
 from urllib.parse import urlparse, parse_qs
 
-
 # hydration
 import htmlisp
+from collections import ChainMap
 
 # handling sessions
 import uuid
@@ -62,24 +62,33 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
 
     if path == "/":
       curs = DBCONN.cursor()
-      venv = htmlisp.getEnv({
+      venv = lambda :({
         "path": self.path,
         "cookie": cookie,
         "curs": curs,
         "session": SESSIONS.get(cookie["session"], None)
                    if "session" in cookie else None,
-      })
+        "front": path[5:],
+        "method": "POST",
+        "query": {k:v[0] for k, v in query.items()},
+        **htmlisp.getPrelude()()[0]
+      },  ChainMap({}))
+      err, msg = htmlisp.evaluate("./src/index.htmlisp", venv)
+      if err is not None:
+        htmlisp.showError(err)
+        self.send_response(501)
+        return
       self.send_response(200)
       self.end_headers()
       self.wfile.write(
-        str(htmlisp.evaluate("./src/index.htmlisp", venv)).encode()
+        str(msg).encode()
       )
       curs.close()
 
     elif path.startswith("/app/"):
       print("APPLETTE")
       curs = DBCONN.cursor()
-      venv = htmlisp.getEnv({
+      venv = lambda :({
         "path": self.path,
         "cookie": cookie,
         "curs": curs,
@@ -87,12 +96,18 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
                    if "session" in cookie else None,
         "front": path[5:],
         "method": "GET",
-        "query": {k:v[0] for k, v in query.items()}
-      })
+        "query": {k:v[0] for k, v in query.items()},
+        **htmlisp.getPrelude()()[0]
+      },  ChainMap({}))
+      err, msg = htmlisp.evaluate("./src/app.htmlisp", venv)
+      if err is not None:
+        htmlisp.showError(err)
+        self.send_response(501)
+        return
       self.send_response(200)
       self.end_headers()
       self.wfile.write(
-        str(htmlisp.evaluate("./src/app.htmlisp", venv)).encode()
+        str(msg).encode()
       )
       curs.close()
 
@@ -143,7 +158,7 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
 
     if path.startswith("/app/"):
       curs = DBCONN.cursor()
-      venv = htmlisp.getEnv({
+      venv = lambda :({
         "path": self.path,
         "cookie": cookie,
         "curs": curs,
@@ -151,8 +166,9 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
                    if "session" in cookie else None,
         "front": path[5:],
         "method": "POST",
-        "query": {k:v[0] for k, v in query.items()}
-      })
+        "query": {k:v[0] for k, v in query.items()},
+        **htmlisp.getPrelude()()[0]
+      },  ChainMap({}))
       self.send_response(200)
       self.end_headers()
       self.wfile.write(
