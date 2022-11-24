@@ -1,9 +1,11 @@
 import sys, os
 from ast import literal_eval
 from collections import ChainMap
-from typing import Callable, Optional, Any
+from typing import Callable, Optional, Any, Iterable, NoReturn
 from iters import *
 
+global CURPATH
+CURPATH : str
 
 class Error:
   __slots__ = ("msg", "line", "col", "file", "end")
@@ -54,13 +56,17 @@ class NoCall(AstNode):
     self.val, self.line, self.col = val, line, col
 
 class Expression(AstNode):
-  __slots__ = ("toks", "end")
+  __slots__ = ("toks", "end", "parent", "ind")
   toks: list[AstNode]
   end: int
-  def __init__(self, toks: list[AstNode], line: int, col: int, end: int):
+  parent: "Expression | Program"
+  ind: int
+  def __init__(self, toks: list[AstNode], line: int, col: int, end: int,
+                     parent: "Expression | Program", ind: int = -1):
     self.toks, self.line, self.col, self.end = toks, line, col, end
+    self.parent, self.ind = parent, ind
   def __str__(self): return f"({' '.join(map(str, self.toks))})"
-
+  def rci(self): return len(self.toks)
 
 class Program(AstNode):
   __slots__  = ("prog", "path")
@@ -70,7 +76,26 @@ class Program(AstNode):
     self.prog, self.line, self.col = prog, line, col
     self.path = path
   def __str__(self): return str(self.prog)
+  def rci(self): return -1
 
+def getSelf(node: Expression | Program) -> Optional[AstNode]:
+  """
+  Gets itself from its parent.
+  used for when a macro could change the structure of the AST
+  """
+  if isinstance(node, Program): return None
+  if isinstance(node.parent, Program): return node.parent.prog
+  return node.parent.toks[node.ind]
+
+def setSelf(node: Expression, new: AstNode):
+  parent = node.parent
+  if isinstance(parent, Program): parent.prog = new
+  else: parent.toks[node.ind] = new
+
+
+import pickle
+def deepCopy(ast: AstNode):
+  return pickle.loads(pickle.dumps(ast))
 
 def parse(txt: str, path="undefined") -> Program | Error:
   cind, mxind = 0, len(txt)
@@ -112,7 +137,7 @@ def parse(txt: str, path="undefined") -> Program | Error:
     elif (c == "/" and peek == "/") or c == ";":
       while peek != "\n": advance()
     elif c == "(":
-      push(Expression([], line, col, -1))
+      push(Expression([], line, col, -1, stack[-1],stack[-1].rci()))
     elif c == ")":
       tmp00: Expression = pop()
       tmp00.end = line
@@ -177,6 +202,7 @@ def quickCheck(arg: Program, path="undefined") -> Optional[Error]:
   return None
 
 def parseFile(path: str) -> Program | Error:
+  print("parsing:: ", repr(path))
   if not os.path.exists(path):
     return Error(f"file {path!r} does not exist", -1, -1, -1, path)
   with open(path, "r") as f:
@@ -229,39 +255,36 @@ Environment = tuple[dict[str, Any], ChainMap[str, Any]]
 Result = tuple[Optional[Error], Any]
 
 class Macro:
-  func: Callable[[Expression, Environment, tuple[AstNode, ...]], Result]
+  func: Callable[[Expression, Environment, Iterable[AstNode]], Optional[Error]]
   def __init__(self, func): self.func = func
 
 def _eval(node: AstNode, env: Environment) -> Result:
   if type(node) is Program:
+    global CURPATH
     assert node.prog is not None
     nenv = (env[0], ChainMap({"__name__": node.path}))
-    return _eval(node.prog, nenv)
+    CURPATH = node.path
+    return _eval(deepCopy(node.prog), nenv)
   elif type(node) is Expression:
-    # check if dynmacro then change how shit is passed
-    fnode = node.toks[0]
-    if isinstance(fnode, NoCall):
-      return _eval(fnode.val, env)
-    err, f  = _eval(fnode, env)
+    # if and while the first one is a macro, expand it, hard re-evaluate
+    # else treat as function call
+    err, fnode = _eval(node.toks[0], env)
     if err is not None: return err, None
-    if isinstance(f, Macro):
-      err, new = f.func(node, env, tuple(node.toks[1:]))
+    if isinstance(fnode, Macro):
+      err = fnode.func(node, env, node.toks[1:][:])
       if err is not None: return err, None
-      if not isinstance(new, list):
-        new= [new]
-      return _eval(Expression(list(new), node.line, node.col, node.end), env)
-    else:
-      if not callable(f):
-        return Error("attempted call of non-callable",
-                     node.line, node.col, node.end,
-                     env[1]["__name__"]),None
-      args = []
-      for i in node.toks[1:]:
-        err, val  = _eval(i, env)
-        if err is not None: return err, None
-        args.append(val)
-
-      return None, f(*args)
+      targ = getSelf(node)
+      if targ is None:
+        return Error("Macro expansion created empty expression",
+                      node.line, node.col, node.end,
+                      env[1]["__name__"]), None
+      return _eval(targ, env)
+    args = []
+    for an in node.toks[1:]:
+      err, arg = _eval(an, env)
+      if err is not None: return err, None
+      args.append(arg)
+    return fnode(*args)
 
   elif type(node) is Ident:
     res: Any; err: Optional[Error]
@@ -271,6 +294,7 @@ def _eval(node: AstNode, env: Environment) -> Result:
       node.line, node.col, -1,
       env[1].get("__name__", "__main__")
     )
+
     return err, res
   elif type(node) is Literal:
     return None, literal_eval(node.lit)
@@ -343,14 +367,14 @@ def attrib(tag: HtmlTag, *attribs: str) -> HtmlTag:
   return tmp
 
 @Macro
-def fIf(ref: Expression, env: Environment, args: list[AstNode]) -> Result:
+def fIf(ref: Expression, env: Environment, args: list[AstNode]) -> Optional[Error]:
   if len(args) != 3:
     return Error("`if` takes 3 arguments",
-                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+                 ref.line, ref.col, ref.end, env[1]["__name__"])
   err, cond = _eval(args[0], env)
-  if err is not None: return err, None
-  body = args[int(cond) + 1]
-  return None, body.toks if isinstance(body, Expression) else [body]
+  if err is not None: return err
+  setSelf(ref, args[1 + bool(cond)])
+
 
 @Macro
 def fLet(ref: Expression, env: Environment, args: list[AstNode]):
@@ -384,29 +408,50 @@ def fDef(ref: Expression, env: Environment, args: list[AstNode]):
     if not isinstance(pn, Ident):
       return Error("`def` requires body",
                   ref.line, ref.col, ref.end, env[1]["__name__"]), None
-    params.append(pn)
-  def inner(*iargs : Any):
-    nenv = {k.toks:v for (k,v) in zip(params, iargs)}
+    params.append(pn.tok)
+  def inner(*args) -> Result:
+    if len(args) != len(params):
+      return Error(f"defun expected {len(params)} args, got {len(args)}",
+                    ref.line, ref.col, ref.end, env[1]["__name__"]), None
+    nenv = dict(zip(params, args))
     return _eval(body, (env[0], env[1].new_child(nenv)))
 
-  return None, Raw(inner, ref.line, ref.col)
+  setSelf(ref, Raw(inner, ref.line, ref.col))
+  
 
+def ResultWrap(f: Callable[..., Any]) -> Callable[..., Result]:
+  global CURPATH
+  def wrapped(*args):
+    try:
+      return None, f(*args)
+    except Exception as e:
+      return Error(str(e), -1, -1, -1 , CURPATH), None
+  return wrapped
 
+def spread(f:Callable[..., Any], args: Iterable[Any]) -> Any:
+  return f(*args)
+def wMap(f: Callable[..., Result], xs: Iterable[Any]) -> Result:
+  result = []
+  for x in xs:
+    err, res = f(x)
+    if err is not None: return err, None
+    result.append(res)
+  return None, result
 _benv = {
-    "+": lambda x, *y: reduce(op.add, y, x),
-    "-": lambda x, *y: reduce(op.sub, y, x),
-    "*": lambda x, *y: reduce(op.mul, y, x),
-    "/": lambda x, *y: reduce(op.truediv, y, x),
-    "//": lambda x, *y: reduce(op.floordiv, y, x),
-    "%": lambda x, *y: reduce(op.mod, y, x),
-    "=": lambda x, *y: reduce(op.eq, y, x),
-    "/=": lambda x, *y: reduce(op.ne, y, x),
-    "...": lambda f, xs: f(*xs),
-    "[]": list,
-    "range": range,
-    "map": map,
-    "list": lambda *x: list(x),
-    "digest": digest, "attrib": attrib,
+    "+": ResultWrap(lambda x, *y: reduce(op.add, y, x)),
+    "-": ResultWrap(lambda x, *y: reduce(op.sub, y, x)),
+    "*": ResultWrap(lambda x, *y: reduce(op.mul, y, x)),
+    "/": ResultWrap(lambda x, *y: reduce(op.truediv, y, x)),
+    "//": ResultWrap(lambda x, *y: reduce(op.floordiv, y, x)),
+    "%": ResultWrap(lambda x, *y: reduce(op.mod, y, x)),
+    "=": ResultWrap(lambda x, *y: reduce(op.eq, y, x)),
+    "/=": ResultWrap(lambda x, *y: reduce(op.ne, y, x)),
+    "...": ResultWrap(lambda f, xs: f(*xs)),
+    "[]": ResultWrap(list),
+    "range": ResultWrap(range),
+    "map": wMap,
+    "list": ResultWrap(lambda *x: list(x)),
+    "digest": ResultWrap(digest), "attrib": ResultWrap(attrib),
 
     "if": fIf, "let": fLet, "def": fDef,
 
@@ -433,6 +478,7 @@ def getEnv(env: dict[str, object]):
 
 def showError(err: Error):
   lines = []
+  print(err, file= sys.stderr)
   with open(err.file, "r") as f:
     for _ in range(err.line - 1):
       f.readline()
@@ -440,7 +486,7 @@ def showError(err: Error):
     if err.end != -1:
       for _ in range(err.end - err.line):
         lines.append(f.readline())
-  print(err, file= sys.stderr)
+        
   print(*lines, sep="\n",file=sys.stderr)
   if len(lines) == 1:
     print(" "*(err.col - 2) + "^", file=sys.stderr)
@@ -449,7 +495,7 @@ from functools import reduce
 import operator as op
 
 if __name__ == "__main__":
-  filename = "./src/index.htmlisp"
+  filename = "./test.htmlisp"
   resp = parseFile(filename)
   if isinstance(resp, Error):
     showError(resp)
