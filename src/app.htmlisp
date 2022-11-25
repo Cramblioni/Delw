@@ -2,22 +2,22 @@
 ; this also acts as the digestion point, so applettes don't have to worry about that
 (let getPosts (include "./src/postlist.htmlisp")
      dispPost (def id name title desc tags
-                   (_tr (_td (_h3 (attrib (_a title) "href" (add "/app/post?id=" (str id) )) " - " name) (_p desc))))
+                   (_tr (_td (_h3 (attrib (_a title) "href" (+ "/app/post?id=" (str id) )) " - " name) (_p desc))))
 (digest (_doctype "html")
-        (_html (_head (_title (add "Delw - " front))
-                      (attrib ((_link)) "rel"  "stylesheet"
+        (_html (_head (_title (+ "Delw - " front))
+                      (attrib (_link) "rel"  "stylesheet"
                                         "type" "text/css"
                                         "href" "/src/style.css")
-                      (attrib ((_meta)) "charset" "utf8"))
-               (_body (_nav (attrib ((_img)) "src" "/images/logo.svg" "width" "64px")
-                            (if (eq session None) (_p "Welcome to Delw") (_p "You're logged in")))
-                      (_main (if (eq front "posts")
+                      (attrib (_meta) "charset" "utf8"))
+               (_body (_nav (attrib (_img) "src" "/images/logo.svg" "width" "64px")
+                            (if (= session None) (_p "Welcome to Delw") (_p "You're logged in")))
+                      (_main (if (= front "posts")
                                  (... _table (getPosts dispPost))
-                             (if (eq front "post")
+                             (if (= front "post")
                                  (... (def title path desc (_div (attrib ((_img)) "src" path) (_h2 title) (_p desc) ))
-                                    ((getattr ((getattr curs "execute") "SELECT title, path, description FROM posts where id=?" (getitem query "id") )
+                                    ((. ((. curs "execute") "SELECT title, path, description FROM posts where id=?" (getitem query "id") )
                                               "fetchone")))
-                             (if (eq front "login")
+                             (if (= front "login")
                                  (include "./src/loginform.htmlisp")
                                  (_p "Something went wrong"))))
     ))

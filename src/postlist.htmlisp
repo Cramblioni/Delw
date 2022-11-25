@@ -3,4 +3,4 @@
 
 // assumes a function like (def id name title description tags (...))
 (def factory (map (def x (... factory x))
-    ((getattr ((getattr curs "execute") "SELECT posts.id, users.name, posts.title, posts.description, posts.tags FROM posts JOIN users") "fetchall"))))
+    ((. ((. curs "execute") "SELECT posts.id, users.name, posts.title, posts.description, posts.tags FROM posts JOIN users") "fetchall"))))

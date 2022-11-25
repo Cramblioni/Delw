@@ -1,7 +1,8 @@
 import sys, os
 from ast import literal_eval
 from collections import ChainMap
-from typing import Callable, Optional, Any, Iterable, NoReturn
+from typing import Callable, Optional, \
+                   Any, Iterable, NoReturn, TypeVar, Generic
 from iters import *
 
 global CURPATH
@@ -165,7 +166,7 @@ def parse(txt: str, path="undefined") -> Program | Error:
       add(Literal(buff, line, col))
     else:
       buff = c
-      while peek not in "() \n\t":
+      while cind < mxind and peek not in "() \n\t":
         buff += advance()
       if buff == "None": add(Literal(buff, line, col))
       else: add(Ident(buff, line, col))
@@ -205,8 +206,8 @@ def parseFile(path: str) -> Program | Error:
   print("parsing:: ", repr(path))
   if not os.path.exists(path):
     return Error(f"file {path!r} does not exist", -1, -1, -1, path)
-  with open(path, "r") as f:
-    text = f.read()
+  with open(path, "rb") as f:
+    text = f.read().decode("utf8")
   step = parse(text, path)
   if isinstance(step, Error): return step
   test = quickCheck(step, path)
@@ -242,7 +243,7 @@ def link(arg: Program, lookup: dict[str, Program]) -> dict[str, Program] | Error
         tmp = link(iprog, result)
         if isinstance(tmp, Error): return tmp
         result.update(tmp)
-        cur.toks = [NoCall(result[path], a.line, a.col)]
+        # creating the replacement
       else:
         stack.extend(cur.toks)
     else:
@@ -252,13 +253,49 @@ def link(arg: Program, lookup: dict[str, Program]) -> dict[str, Program] | Error
 
 # evaluating this stuff
 Environment = tuple[dict[str, Any], ChainMap[str, Any]]
-Result = tuple[Optional[Error], Any]
+from typing import Literal as Static
+
+T = TypeVar("T")
+T0 = TypeVar("T0");T1 = TypeVar("T1")
+class Result(Generic[T]):
+  __slots__ = ("kind", "val", "err")
+  kind: bool
+  err: Error
+  val: T
+
+  def __str__(self):
+    if self.kind:
+      return f"Error <{self.err}>"
+    else:
+      return f"Success <{self.val}>"
+
+  def fmap(self, f: Callable[[T], T0]) -> "Result[T0]":
+    if self.kind:
+      return Failure(self.err)
+    else:
+      return Success(f(self.val))
+
+def Failure(err: Error) -> Result[Any]:
+  if not isinstance(err, Error):
+    raise TypeError
+  result = Result()
+  result.kind = True
+  result.err = err
+  return result
+
+def Success(val: T) -> Result[T]:
+  if isinstance(val, Result):
+    raise TypeError
+  result = Result()
+  result.kind = False
+  result.val = val
+  return result
 
 class Macro:
   func: Callable[[Expression, Environment, Iterable[AstNode]], Optional[Error]]
   def __init__(self, func): self.func = func
 
-def _eval(node: AstNode, env: Environment) -> Result:
+def _eval(node: AstNode, env: Environment) -> Result[Any]:
   if type(node) is Program:
     global CURPATH
     assert node.prog is not None
@@ -268,51 +305,62 @@ def _eval(node: AstNode, env: Environment) -> Result:
   elif type(node) is Expression:
     # if and while the first one is a macro, expand it, hard re-evaluate
     # else treat as function call
-    err, fnode = _eval(node.toks[0], env)
-    if err is not None: return err, None
-    if isinstance(fnode, Macro):
-      err = fnode.func(node, env, node.toks[1:][:])
-      if err is not None: return err, None
+    fnode = _eval(node.toks[0], env)
+    if fnode.kind: return fnode
+
+    if isinstance(fnode.val, Macro):
+      err_ = fnode.val.func(node, env, node.toks[1:][:])
+      if err_ is not None: return Failure(err_)
       targ = getSelf(node)
       if targ is None:
-        return Error("Macro expansion created empty expression",
+        return Failure(Error("Macro expansion created empty expression",
                       node.line, node.col, node.end,
-                      env[1]["__name__"]), None
+                      env[1]["__name__"]))
       return _eval(targ, env)
     args = []
     for an in node.toks[1:]:
-      err, arg = _eval(an, env)
-      if err is not None: return err, None
-      args.append(arg)
-    return fnode(*args)
+      arg = _eval(an, env)
+      if arg.kind: return arg
+      args.append(arg.val)
+    if isinstance(fnode, Error): return Failure(fnode)
+    return fnode.val(*args)
 
   elif type(node) is Ident:
     res: Any; err: Optional[Error]
-    try: err, res = None, env[node.tok in env[1]][node.tok]
-    except KeyError: res, err = None, Error(
+    try: return Success(env[node.tok in env[1]][node.tok])
+    except KeyError: return Failure(Error(
       f"name {node.tok!r} not bound",
       node.line, node.col, -1,
       env[1].get("__name__", "__main__")
-    )
-
-    return err, res
+    ))
   elif type(node) is Literal:
-    return None, literal_eval(node.lit)
+    return Success(literal_eval(node.lit))
 
   elif type(node) is Raw:
-    return None, node.val
+    return node.val
 
-  return Error("Unreachable... maybe not?",
+  return Failure(Error("Unreachable... maybe not?",
                node.line, node.col, -1,
-               env[1].get("__name__", "__main__")), None
+               env[1].get("__name__", "__main__")))
 
 __all__ = (
     "evaluate",
     "getPrelude",
     "getEnv",
     "Result", "showError", "Error",
+    "Success", "Failure"
 )
 
+###############################################################
+
+def ResultWrap(f: Callable[..., Any]) -> Callable[..., Result]:
+  global CURPATH
+  def wrapped(*args):
+    try:
+      return Success(f(*args))
+    except Exception as e:
+      return Failure(Error(str(e), -1, -1, -1 , CURPATH))
+  return wrapped
 # implementing HTML tags
 
 class HtmlTag:
@@ -324,17 +372,24 @@ class HtmlTag:
   def __init__(self, *children):
     self.children = list(children)
     self.attrib = {}
-  def __str__(self) -> str:
+  def _html_(self) -> str:
     intag = " ".join(chain([self.tag],
                            map('%s="%s"'.__mod__, self.attrib.items())))
     if len(self.children) == 0:
       return f"<{intag} />"
-    return f'<{intag}>{"".join(map(str, self.children))}</{self.tag}>'
+    return f'<{intag}>{"".join(map(html, self.children))}</{self.tag}>'
+
+def html(obj: Any) -> str:
+  if hasattr(obj, "_html_"):
+    return obj._html_()
+  elif isinstance(obj, str):
+    return obj.replace(">", "&gt;").replace("<", "&lt;")
+  raise TypeError
 
 def tagGen(tags: list[str]) -> dict[str, HtmlTag]:
   result = {}
   for tag in tags:
-    result[tag] = type(tag, (HtmlTag,), {"tag": tag[1:]})
+    result[tag] = ResultWrap(type(tag, (HtmlTag,), {"tag": tag[1:]}))
   return result
 
 def _dts(self): return f"<!DOCTYPE {self.children[0]}"
@@ -354,11 +409,14 @@ tags = {**tagGen([
     '_svg', '_table', '_tbody', '_td', '_template', '_textarea', '_tfoot',
     '_th', '_thead', '_time', '_title', '_tr', '_track', '_u', '_ul', '_var',
     '_video', '_wbr']),
-    "_doctype": type("_doc", (HtmlTag,), {"tag": "!DOCTYPE", "__str__": _dts})}
+    "_doctype": ResultWrap(type("_doc", (HtmlTag,), {
+      "_html_": lambda s:f"<!DOCTYPE {s.children[0]}>"
+    }))}
 
-class Morsel(str): pass
+class Morsel(str):
+  def _html_(self): return str(self)
 def digest(*tags: HtmlTag) -> Morsel:
-  return Morsel("".join(map(str, tags)))
+  return Morsel("".join(map(html, tags)))
 
 def attrib(tag: HtmlTag, *attribs: str) -> HtmlTag:
   tmp = type(tag)()
@@ -371,31 +429,28 @@ def fIf(ref: Expression, env: Environment, args: list[AstNode]) -> Optional[Erro
   if len(args) != 3:
     return Error("`if` takes 3 arguments",
                  ref.line, ref.col, ref.end, env[1]["__name__"])
-  err, cond = _eval(args[0], env)
-  if err is not None: return err
-  setSelf(ref, args[1 + bool(cond)])
+  cond = _eval(args[0], env)
+  if cond.kind: return cond.err
+  setSelf(ref, args[2 - bool(cond.val)])
 
 
 @Macro
-def fLet(ref: Expression, env: Environment, args: list[AstNode]):
+def fLet(ref: Expression, env: Environment, args: list[AstNode]) -> Optional[Error]:
   if len(args) < 3:
     return Error("let requires atleast 3 args",
-                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+                 ref.line, ref.col, ref.end, env[1]["__name__"])
   if len(args) & 1 == 0:
     return Error("let should name value pairs followed by an expression",
-                 ref.line, ref.col, ref.end, env[1]["__name__"]), None
+                 ref.line, ref.col, ref.end, env[1]["__name__"])
   expr = args[-1]
   nenv = {}
   for (k, v) in chunk(args[:-1], 2):
-    err, v2 = _eval(v, env)
-    if err is not None:
-      return err, None
-    nenv.update(((k, v),))
-
-  err, ret = _eval(expr, (env[0], env[1].new_child(nenv)))
-  if err is not None:
-    return err, None
-  return None, Raw(ret, ref.line, ref.col)
+    v2 = _eval(v, env)
+    if v2.kind:
+      return v2.err
+    nenv[k.tok] = v2.val
+  setSelf(ref, Raw(_eval(expr, (env[0], env[1].new_child(nenv))),
+                         ref.line, ref.col))
 
 @Macro
 def fDef(ref: Expression, env: Environment, args: list[AstNode]):
@@ -411,32 +466,39 @@ def fDef(ref: Expression, env: Environment, args: list[AstNode]):
     params.append(pn.tok)
   def inner(*args) -> Result:
     if len(args) != len(params):
-      return Error(f"defun expected {len(params)} args, got {len(args)}",
-                    ref.line, ref.col, ref.end, env[1]["__name__"]), None
+      return Failure(Error(f"defun expected {len(params)} args, got {len(args)}",
+                    ref.line, ref.col, ref.end, env[1]["__name__"]))
     nenv = dict(zip(params, args))
     return _eval(body, (env[0], env[1].new_child(nenv)))
 
-  setSelf(ref, Raw(inner, ref.line, ref.col))
-  
+  setSelf(ref, Raw(Success(inner), ref.line, ref.col))
 
-def ResultWrap(f: Callable[..., Any]) -> Callable[..., Result]:
-  global CURPATH
-  def wrapped(*args):
+@Macro
+def fEnv(ref: Expression, env: Environment, args: list[AstNode]) -> Optional[Error]:
+  if len(args) == 0:
+    return Error("Expected atleast 1 arg for `¦`",
+                 ref.line, ref.col, ref.end, env[1]["__name___"])
+  if len(args) == 1:
+    # this is get
+    lookup = _eval(args[0], env).fmap(str)
+    if lookup.kind: return lookup.err
     try:
-      return None, f(*args)
-    except Exception as e:
-      return Error(str(e), -1, -1, -1 , CURPATH), None
-  return wrapped
+      script = env[0]["__scripts__"][lookup.val]
+    except KeyError:
+      return Error(f"Script \"{lookup.val}\" not loaded",
+                           ref.line, ref.col, ref.end,
+                           env[1]["__name__"])
+    setSelf(ref, Raw(_eval(script, env), ref.line, ref.col))
 
 def spread(f:Callable[..., Any], args: Iterable[Any]) -> Any:
   return f(*args)
 def wMap(f: Callable[..., Result], xs: Iterable[Any]) -> Result:
   result = []
   for x in xs:
-    err, res = f(x)
-    if err is not None: return err, None
-    result.append(res)
-  return None, result
+    res = f(x)
+    if res.kind: return res
+    result.append(res.val)
+  return Success(result)
 _benv = {
     "+": ResultWrap(lambda x, *y: reduce(op.add, y, x)),
     "-": ResultWrap(lambda x, *y: reduce(op.sub, y, x)),
@@ -453,7 +515,11 @@ _benv = {
     "list": ResultWrap(lambda *x: list(x)),
     "digest": ResultWrap(digest), "attrib": ResultWrap(attrib),
 
+    "." : ResultWrap(getattr),
+    ".=": ResultWrap(setattr),
+
     "if": fIf, "let": fLet, "def": fDef,
+    "include": fEnv,
 
     **tags
   }
@@ -465,18 +531,21 @@ def evaluate(path: str,
   prog = parseFile(path)
   if isinstance(prog, Error):
     showError(prog)
-    return prog, None
+    return Failure(prog)
   ltable = link(prog, {"path": prog})
   if isinstance(ltable, Error):
     showError(ltable)
-    return ltable, None
-  return _eval(prog, env())
+    return Failure(ltable)
+  venv = env()
+  venv = ({**venv[0], "__scripts__": ltable}, venv[1])
+  return _eval(prog, venv)
 
 
 def getEnv(env: dict[str, object]):
   return lambda :(_benv, ChainMap(env))
 
 def showError(err: Error):
+  print("---- ERERT")
   lines = []
   print(err, file= sys.stderr)
   with open(err.file, "r") as f:
@@ -486,7 +555,7 @@ def showError(err: Error):
     if err.end != -1:
       for _ in range(err.end - err.line):
         lines.append(f.readline())
-        
+
   print(*lines, sep="\n",file=sys.stderr)
   if len(lines) == 1:
     print(" "*(err.col - 2) + "^", file=sys.stderr)
@@ -496,16 +565,8 @@ import operator as op
 
 if __name__ == "__main__":
   filename = "./test.htmlisp"
-  resp = parseFile(filename)
-  if isinstance(resp, Error):
-    showError(resp)
+  resp = evaluate(filename, getPrelude())
+  if resp.kind:
+    showError(resp.err)
     exit(1)
-  ltable = link(resp, {filename: resp})
-  if isinstance(ltable, Error):
-    showError(ltable)
-    exit(1)
-  err, ret = _eval(resp, (_benv, ChainMap({})))
-  if err is not None:
-    showError(err)
-    exit(1)
-  print(ret)
+  print(resp.val)

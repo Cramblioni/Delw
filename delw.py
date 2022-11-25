@@ -73,16 +73,14 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
         "query": {k:v[0] for k, v in query.items()},
         **htmlisp.getPrelude()()[0]
       },  ChainMap({}))
-      err, msg = htmlisp.evaluate("./src/index.htmlisp", venv)
-      if err is not None:
-        htmlisp.showError(err)
+      msg = htmlisp.evaluate("./src/index.htmlisp", venv).fmap(str).fmap(str.encode)
+      if msg.kind:
+        htmlisp.showError(msg.err)
         self.send_response(501)
         return
       self.send_response(200)
       self.end_headers()
-      self.wfile.write(
-        str(msg).encode()
-      )
+      self.wfile.write(msg.val)
       curs.close()
 
     elif path.startswith("/app/"):
@@ -99,16 +97,14 @@ class APIthingy(http.server.BaseHTTPRequestHandler):
         "query": {k:v[0] for k, v in query.items()},
         **htmlisp.getPrelude()()[0]
       },  ChainMap({}))
-      err, msg = htmlisp.evaluate("./src/app.htmlisp", venv)
-      if err is not None:
-        htmlisp.showError(err)
+      msg = htmlisp.evaluate("./src/app.htmlisp", venv).fmap(str).fmap(str.encode)
+      if msg.kind:
+        htmlisp.showError(msg.err)
         self.send_response(501)
         return
       self.send_response(200)
       self.end_headers()
-      self.wfile.write(
-        str(msg).encode()
-      )
+      self.wfile.write(msg.val)
       curs.close()
 
     elif path.startswith("/src/"):
@@ -232,7 +228,7 @@ def parsePOST(self: APIthingy) -> list[Item]:
   contentType, *contentMeta = self.headers["Content-Type"].split("; ")
   contentMeta = dict(map(lambda x:x.split("="), contentMeta))
   if contentType == "multipart/form-data":
-    divider = b"\r\n--" + contentMeta["boundary"]
+    divider = b"\r\n--" + contentMeta["boundary"].encode()
     # annoying
     result = []
     for chunk in body.split(divider):
@@ -252,7 +248,7 @@ def parsePOST(self: APIthingy) -> list[Item]:
       for (k, v) in map(lambda x: x.split(b"="), body.split(b"&"))}, b"")]
   return []
 
-PORT: int = 8080
+PORT: int = 8090
 HANDLER = APIthingy
 async def main():
   global DBCONN, CURLOOP
